@@ -33,3 +33,4 @@ logs/
 # Plugin test server
 test-server/
 run/
+newspaper_client.py

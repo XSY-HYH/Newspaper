@@ -92,7 +92,6 @@ public class WsSession implements Runnable {
                 String line = headerBuilder.toString().trim();
                 if (line.isEmpty()) {
                     String result = headerBuilder.toString();
-                    headerBuilder.setLength(0);
                     return result;
                 }
                 headerBuilder.setLength(0);
