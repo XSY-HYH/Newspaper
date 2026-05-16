@@ -80,10 +80,10 @@ public class NewspaperPlugin extends JavaPlugin {
         String version = Bukkit.getMinecraftVersion();
         if (version.startsWith("1.21")) {
             getLogger().info("Detected Paper 1.21.x - using Paper121 abstraction");
-            return new Paper121();
+            return new Paper121(this);
         }
         getLogger().info("Detected Paper 1.20.x - using Paper120 abstraction");
-        return new Paper120();
+        return new Paper120(this);
     }
 
     private void registerHandlers() {

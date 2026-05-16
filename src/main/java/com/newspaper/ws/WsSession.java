@@ -60,18 +60,13 @@ public class WsSession implements Runnable {
     private boolean performHandshake() throws IOException {
         String headers = readHttpHeaders();
         
-        System.out.println("[DEBUG] Raw HTTP headers:\n" + headers);
-        
         if (headers == null || headers.isEmpty()) {
-            System.out.println("[DEBUG] Headers is null or empty, returning false");
             return false;
         }
 
         String key = extractHeader(headers, "Sec-WebSocket-Key:");
-        System.out.println("[DEBUG] WebSocket Key: " + key);
         
         if (key == null) {
-            System.out.println("[DEBUG] Key is null, returning false");
             return false;
         }
 
@@ -84,10 +79,8 @@ public class WsSession implements Runnable {
         response.append("Sec-WebSocket-Accept: ").append(acceptKey).append("\r\n");
         response.append("\r\n");
 
-        System.out.println("[DEBUG] Sending handshake response");
         out.write(response.toString().getBytes(StandardCharsets.UTF_8));
         out.flush();
-        System.out.println("[DEBUG] Handshake complete, returning true");
         return true;
     }
 
