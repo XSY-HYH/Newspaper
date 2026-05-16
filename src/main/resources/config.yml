@@ -1,0 +1,5 @@
+port: 8080
+username: "admin"
+password: "newspaper"
+ipv6: false
+language: "en"

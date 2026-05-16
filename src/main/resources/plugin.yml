@@ -1,0 +1,22 @@
+name: Newspaper
+version: "1.0.0"
+main: com.newspaper.NewspaperPlugin
+api-version: "1.20"
+description: "WebSocket-based remote server management plugin with CHAP-IEM encryption"
+author: "Newspaper"
+website: "https://github.com/newspaper"
+
+commands:
+  newspaper:
+    description: "Newspaper plugin management command"
+    usage: "/newspaper reload"
+    permission: newspaper.admin
+    permission-message: "You do not have permission to use this command."
+
+permissions:
+  newspaper.admin:
+    description: "Allows use of Newspaper admin commands"
+    default: op
+  newspaper.ws.connect:
+    description: "Allows connecting to Newspaper WebSocket"
+    default: op
