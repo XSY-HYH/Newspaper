@@ -1,8 +1,6 @@
 package com.newspaper.ws;
 
-import com.newspaper.chap.Chapiem;
-import com.newspaper.chap.ChapiemSession;
-import com.newspaper.chap.CryptoUtil;
+import com.newspaper.encryption.EncryptionProvider;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -17,17 +15,17 @@ public class WsSession implements Runnable {
     private final Socket socket;
     private final InputStream in;
     private final OutputStream out;
-    private final ChapiemSession chapSession;
+    private final EncryptionProvider.SessionHandler sessionHandler;
     private final MessageDispatcher dispatcher;
     private final Logger logger;
     private volatile boolean running = true;
 
-    public WsSession(Socket socket, ChapiemSession chapSession, MessageDispatcher dispatcher, Logger logger)
-            throws IOException {
+    public WsSession(Socket socket, EncryptionProvider.SessionHandler sessionHandler,
+                     MessageDispatcher dispatcher, Logger logger) throws IOException {
         this.socket = socket;
         this.in = socket.getInputStream();
         this.out = socket.getOutputStream();
-        this.chapSession = chapSession;
+        this.sessionHandler = sessionHandler;
         this.dispatcher = dispatcher;
         this.logger = logger;
     }
@@ -59,13 +57,13 @@ public class WsSession implements Runnable {
 
     private boolean performHandshake() throws IOException {
         String headers = readHttpHeaders();
-        
+
         if (headers == null || headers.isEmpty()) {
             return false;
         }
 
         String key = extractHeader(headers, "Sec-WebSocket-Key:");
-        
+
         if (key == null) {
             return false;
         }
@@ -86,14 +84,14 @@ public class WsSession implements Runnable {
 
     private String readHttpHeaders() throws IOException {
         StringBuilder allHeaders = new StringBuilder();
-        
+
         while (true) {
             int b = in.read();
             if (b == -1) {
                 return null;
             }
             allHeaders.append((char) b);
-            
+
             if (allHeaders.length() >= 4) {
                 String end = allHeaders.substring(allHeaders.length() - 4);
                 if (end.equals("\r\n\r\n")) {
@@ -136,39 +134,26 @@ public class WsSession implements Runnable {
     }
 
     private void handleBinaryMessage(byte[] payload) throws IOException {
-        if (!chapSession.isAuthenticated()) {
-            Chapiem.LoginResult loginResult = Chapiem.processLogin(chapSession, payload);
-            if (loginResult.success()) {
-                sendFrame(WsFrame.createBinaryFrame(loginResult.responseData()));
-                logger.info("Client authenticated: " + socket.getInetAddress());
-            } else {
-                logger.warning("Client authentication failed: " + loginResult.errorMessage());
-                sendFrame(WsFrame.createCloseFrame());
-                running = false;
+        try {
+            byte[] response = sessionHandler.processIncoming(payload);
+
+            if (response != null) {
+                sendFrame(WsFrame.createBinaryFrame(response));
             }
-            return;
-        }
-
-        Chapiem.OperationResult result = Chapiem.processOperation(
-                chapSession, payload, dispatcher::dispatch);
-
-        if (result.needsRecovery()) {
-            sendFrame(WsFrame.createBinaryFrame(result.recoveryData()));
-            chapSession.updateId(result.newId());
-            return;
-        }
-
-        if (result.success() && result.responseData() != null) {
-            sendFrame(WsFrame.createBinaryFrame(result.responseData()));
-        } else if (!result.success()) {
-            byte[] errorFrame = WsFrame.createCloseFrame();
-            sendFrame(errorFrame);
+        } catch (EncryptionProvider.EncryptionException e) {
+            if (!sessionHandler.isAuthenticated()) {
+                logger.warning("Client authentication failed: " + e.getMessage());
+            } else {
+                logger.warning("Encryption processing failed: " + e.getMessage());
+            }
+            sendFrame(WsFrame.createCloseFrame());
+            running = false;
         }
     }
 
     private void handleTextMessage(String message) throws IOException {
         sendFrame(WsFrame.createTextFrame(
-                "{\"status\":\"error\",\"message\":\"Binary frames required for CHAP-IEM\"}"));
+                "{\"status\":\"error\",\"message\":\"Binary frames required\"}"));
     }
 
     public void sendFrame(byte[] frame) {
@@ -184,23 +169,14 @@ public class WsSession implements Runnable {
     }
 
     public void sendBinary(byte[] data) {
-        if (!chapSession.isAuthenticated()) {
-            return;
+        try {
+            byte[] encrypted = sessionHandler.preparePush(data);
+            if (encrypted != null) {
+                sendFrame(WsFrame.createBinaryFrame(encrypted));
+            }
+        } catch (EncryptionProvider.EncryptionException e) {
+            logger.log(Level.WARNING, "Failed to prepare push data: " + e.getMessage());
         }
-
-        byte[] currentKey = chapSession.getCurrentKey();
-        byte[] newId = CryptoUtil.generateId();
-
-        com.google.gson.JsonObject pushPacket = new com.google.gson.JsonObject();
-        pushPacket.addProperty("status", "ok");
-        pushPacket.addProperty("id", java.util.Base64.getEncoder().encodeToString(newId));
-        pushPacket.addProperty("data", new String(data, StandardCharsets.UTF_8));
-
-        byte[] encrypted = Chapiem.encryptResponse(currentKey,
-                new com.google.gson.Gson().toJson(pushPacket));
-
-        chapSession.updateId(newId);
-        sendFrame(WsFrame.createBinaryFrame(encrypted));
     }
 
     public void close() {

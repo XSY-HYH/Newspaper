@@ -48,7 +48,7 @@ public class NewspaperPlugin extends JavaPlugin {
         dispatcher = new MessageDispatcher(logger);
         registerHandlers();
 
-        wsServer = new NewspaperWebSocketServer(configManager.getConfig(), dispatcher, logger);
+        wsServer = new NewspaperWebSocketServer(configManager.getConfig(), dispatcher, logger, getDataFolder());
         wsServer.start();
 
         getCommand("newspaper").setExecutor(this::onCommand);
@@ -110,7 +110,7 @@ public class NewspaperPlugin extends JavaPlugin {
         i18nManager.loadLanguage(configManager.getConfig().getLanguage());
 
         wsServer.stop();
-        wsServer = new NewspaperWebSocketServer(configManager.getConfig(), dispatcher, getLogger());
+        wsServer = new NewspaperWebSocketServer(configManager.getConfig(), dispatcher, getLogger(), getDataFolder());
         wsServer.start();
     }
 

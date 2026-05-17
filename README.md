@@ -3,17 +3,29 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Paper](https://img.shields.io/badge/Paper-1.20--1.21.1-blue)](https://papermc.io)
 
-A Paper plugin that enables remote server management via WebSocket with CHAP-IEM encryption from [ZIM (Zigzag Interaction Model)](https://github.com/XSY-HYH/ZIM-Zigzag-Interaction-Model).
+A Paper plugin that enables remote server management via WebSocket with configurable encryption.
 
-## Overview
+## Encryption Modes
 
-Newspaper provides a secure WebSocket channel for controlling your Minecraft server remotely. All communication is encrypted using the CHAP-IEM protocol, which provides forward secrecy through automatic key rotation after every operation.
+Newspaper supports multiple encryption protocols so you can choose the one you trust. If you don't want to use the default CHAP-IEM protocol, you can switch to TLS or SSH — standard, well-audited protocols that are widely trusted in the industry.
 
-> **Encryption**: The CHAP-IEM (Chain Hash Authentication Protocol - ID Encryption Mode) implementation is sourced from the [ZIM-Zigzag-Interaction-Model](https://github.com/XSY-HYH/ZIM-Zigzag-Interaction-Model) project. See that repository for the full protocol specification.
+| Mode | Config Value | Transport | Description |
+|------|-------------|-----------|-------------|
+| **CHAP-IEM** | `chap-iem` | `ws://` | Default. Application-layer encryption with per-operation key rotation and forward secrecy. Implementation from [ZIM (Zigzag Interaction Model)](https://github.com/XSY-HYH/ZIM-Zigzag-Interaction-Model). |
+| **TLS** | `tls` | `wss://` | Standard TLS 1.2/1.3 encryption at the transport layer. Auto-generates a self-signed certificate on first start. Clients connect via `wss://`. |
+| **SSH** | `ssh` | `ws://` | SSH-style RSA key exchange with signature verification, then AES-256-GCM for session encryption. Provides public-key authentication similar to OpenSSH. |
+
+To change the encryption mode, set the `encryption` field in `config.yml`:
+
+```yaml
+encryption: "chap-iem"  # Options: chap-iem, tls, ssh,
+```
+
+> **Note**: Changing the encryption mode requires a config reload (`/newspaper reload`) to take effect. TLS mode generates a `keystore.jks` file in the plugin directory on first start.
 
 ## Features
 
-- **Secure Communication** — CHAP-IEM encryption with per-operation key rotation and forward secrecy
+- **Flexible Encryption** — Choose between CHAP-IEM, TLS, or SSH encryption protocols
 - **12 Operation Types** — Full remote server management capabilities
 - **Version Compatibility** — Supports Paper 1.20.x through 1.21.1 via an abstraction layer
 - **Internationalization** — Built-in English (`en`) and Chinese (`zh`) translations
@@ -24,11 +36,12 @@ Newspaper provides a secure WebSocket channel for controlling your Minecraft ser
 
 ```yaml
 # plugins/Newspaper/config.yml
-port: 8080          # WebSocket server port
-username: "admin"   # Login username
-password: "newspaper" # Login password
-ipv6: false         # Enable IPv6 support
-language: "en"      # UI language (en / zh)
+port: 8080              # WebSocket server port
+username: "admin"       # Login username
+password: "newspaper"   # Login password
+ipv6: false             # Enable IPv6 support
+language: "en"          # UI language (en / zh)
+encryption: "chap-iem"  # Encryption mode (chap-iem / tls / ssh)
 ```
 
 ## Commands
@@ -41,17 +54,19 @@ language: "en"      # UI language (en / zh)
 
 ### Connection
 
-Connect to `ws://<server-ip>:<port>/` using any WebSocket client. All data frames must be **binary** (opcode `0x2`).
+Connect using the appropriate protocol based on your encryption mode:
+- **CHAP-IEM / SSH**: `ws://<server-ip>:<port>/`
+- **TLS**: `wss://<server-ip>:<port>/`
+
+All data frames must be **binary** (opcode `0x2`).
 
 ### Authentication
 
-Newspaper uses the CHAP-IEM protocol for authentication and encryption. The encryption implementation is sourced from [ZIM-Zigzag-Interaction-Model](https://github.com/XSY-HYH/ZIM-Zigzag-Interaction-Model). Refer to that project for the complete protocol specification.
+All encryption modes require authentication. The exact flow depends on the selected mode:
 
-In short:
-1. Client derives an AES-256 key from the configured password
-2. Client sends an encrypted login request containing the username
-3. Server verifies and returns a session ID used as the encryption key for subsequent operations
-4. The encryption key rotates with every operation, providing forward secrecy
+- **CHAP-IEM**: The CHAP-IEM protocol handles both encryption and authentication. See [ZIM-Zigzag-Interaction-Model](https://github.com/XSY-HYH/ZIM-Zigzag-Interaction-Model) for the full specification.
+- **TLS**: Transport is encrypted by TLS. Application-layer authentication uses AES-256-GCM with the configured password as a pre-shared key, plus per-operation key rotation.
+- **SSH**: RSA key exchange with signature verification, followed by username/password authentication encrypted with the derived session key.
 
 ### Operation Types
 
@@ -159,7 +174,7 @@ Update Newspaper configuration values.
 }
 ```
 
-Supported fields: `port`, `username`, `password`, `ipv6`, `language`.
+Supported fields: `port`, `username`, `password`, `ipv6`, `language`, `encryption`.
 
 > **Note**: Changes require a `config_reload` to take effect.
 
@@ -186,3 +201,49 @@ Send a broadcast message to all players (supports `&` color codes).
 ```json
 { "type": "console_broadcast", "data": { "message": "&aServer will restart in 5 minutes!" } }
 ```
+
+## Building
+
+```bash
+./gradlew build
+```
+
+The output JAR is located at `build/libs/Newspaper-1.1.1.jar`.
+
+## Project Structure
+
+```
+src/main/java/com/newspaper/
+├── NewspaperPlugin.java          # Plugin entry point
+├── abstraction/                  # Version compatibility layer
+│   ├── PlatformAbstraction.java  # Unified API interface
+│   ├── Paper120.java             # Paper 1.20.x adapter
+│   └── Paper121.java             # Paper 1.21.x adapter
+├── chap/                         # CHAP-IEM protocol
+│   ├── Chapiem.java              # Protocol state machine
+│   ├── ChapiemSession.java       # Session state management
+│   └── CryptoUtil.java           # AES-256-GCM encryption utilities
+├── config/                       # Configuration management
+│   ├── ConfigManager.java        # Load/save/reload config
+│   └── NewspaperConfig.java      # Config data holder
+├── encryption/                   # Encryption provider abstraction
+│   ├── EncryptionMode.java       # Enum: chap-iem, tls, ssh
+│   ├── EncryptionProvider.java   # Provider interface
+│   ├── ChapIemProvider.java      # CHAP-IEM implementation
+│   ├── TlsProvider.java          # TLS (wss://) implementation
+│   ├── SshProvider.java          # SSH key exchange implementation
+│   └── BouncyCastleCertGenerator.java  # Self-signed cert via keytool
+├── handler/                      # Operation handlers (12 types)
+├── i18n/                         # Internationalization
+│   ├── I18nManager.java          # Language loader & validator
+│   └── MessageKey.java           # Translation key constants
+└── ws/                           # WebSocket server
+    ├── NewspaperWebSocketServer.java  # Server lifecycle
+    ├── WsSession.java            # Per-client session handler
+    ├── WsFrame.java              # RFC 6455 frame parser/builder
+    └── MessageDispatcher.java    # Operation routing
+```
+
+## License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

@@ -7,6 +7,7 @@ public class NewspaperConfig {
     private String password = "newspaper";
     private boolean ipv6 = false;
     private String language = "en";
+    private String encryption = "ssh";
 
     public int getPort() {
         return port;
@@ -46,5 +47,13 @@ public class NewspaperConfig {
 
     public void setLanguage(String language) {
         this.language = language;
+    }
+
+    public String getEncryption() {
+        return encryption;
+    }
+
+    public void setEncryption(String encryption) {
+        this.encryption = encryption;
     }
 }

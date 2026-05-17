@@ -3,3 +3,4 @@ username: "admin"
 password: "newspaper"
 ipv6: false
 language: "en"
+encryption: "chap-iem"

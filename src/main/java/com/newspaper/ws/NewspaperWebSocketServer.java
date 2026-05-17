@@ -1,12 +1,14 @@
 package com.newspaper.ws;
 
-import com.newspaper.chap.ChapiemSession;
-import com.newspaper.chap.CryptoUtil;
 import com.newspaper.config.NewspaperConfig;
+import com.newspaper.encryption.ChapIemProvider;
+import com.newspaper.encryption.EncryptionMode;
+import com.newspaper.encryption.EncryptionProvider;
+import com.newspaper.encryption.SshProvider;
+import com.newspaper.encryption.TlsProvider;
 
+import java.io.File;
 import java.io.IOException;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.List;
@@ -22,6 +24,7 @@ public class NewspaperWebSocketServer {
     private final NewspaperConfig config;
     private final MessageDispatcher dispatcher;
     private final Logger logger;
+    private final File pluginDataFolder;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final List<WsSession> sessions = new CopyOnWriteArrayList<>();
     private final ExecutorService threadPool = Executors.newCachedThreadPool(r -> {
@@ -32,11 +35,14 @@ public class NewspaperWebSocketServer {
 
     private ServerSocket serverSocket;
     private Thread acceptThread;
+    private EncryptionProvider encryptionProvider;
 
-    public NewspaperWebSocketServer(NewspaperConfig config, MessageDispatcher dispatcher, Logger logger) {
+    public NewspaperWebSocketServer(NewspaperConfig config, MessageDispatcher dispatcher,
+                                    Logger logger, File pluginDataFolder) {
         this.config = config;
         this.dispatcher = dispatcher;
         this.logger = logger;
+        this.pluginDataFolder = pluginDataFolder;
     }
 
     public void start() {
@@ -45,13 +51,10 @@ public class NewspaperWebSocketServer {
         }
 
         try {
-            InetAddress bindAddr = config.isIpv6()
-                    ? InetAddress.getByName("::")
-                    : InetAddress.getByName("0.0.0.0");
+            EncryptionMode mode = EncryptionMode.fromConfig(config.getEncryption());
+            encryptionProvider = createProvider(mode);
 
-            serverSocket = new ServerSocket();
-            serverSocket.setReuseAddress(true);
-            serverSocket.bind(new InetSocketAddress(bindAddr, config.getPort()));
+            serverSocket = encryptionProvider.createServerSocket(config.getPort(), config.isIpv6());
 
             running.set(true);
 
@@ -60,10 +63,19 @@ public class NewspaperWebSocketServer {
             acceptThread.start();
 
             logger.info("WebSocket server started on port " + config.getPort()
+                    + " (encryption: " + mode.getConfigValue() + ")"
                     + (config.isIpv6() ? " (IPv6)" : " (IPv4)"));
-        } catch (IOException e) {
+        } catch (Exception e) {
             logger.log(Level.SEVERE, "Failed to start WebSocket server: " + e.getMessage(), e);
         }
+    }
+
+    private EncryptionProvider createProvider(EncryptionMode mode) {
+        return switch (mode) {
+            case TLS -> new TlsProvider(pluginDataFolder, logger);
+            case SSH -> new SshProvider();
+            case CHAP_IEM -> new ChapIemProvider();
+        };
     }
 
     private void acceptLoop() {
@@ -81,10 +93,15 @@ public class NewspaperWebSocketServer {
 
     private void handleClient(Socket socket) {
         try {
-            byte[] preSharedKey = CryptoUtil.deriveKey(config.getPassword());
-            ChapiemSession chapSession = new ChapiemSession(preSharedKey, config.getUsername());
+            EncryptionProvider.SessionHandler sessionHandler = encryptionProvider.createSessionHandler(
+                    socket.getInputStream(),
+                    socket.getOutputStream(),
+                    config.getUsername(),
+                    config.getPassword(),
+                    dispatcher::dispatch
+            );
 
-            WsSession wsSession = new WsSession(socket, chapSession, dispatcher, logger);
+            WsSession wsSession = new WsSession(socket, sessionHandler, dispatcher, logger);
             sessions.add(wsSession);
 
             logger.info("WebSocket client connected: " + socket.getInetAddress().getHostAddress());

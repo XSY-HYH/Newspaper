@@ -45,13 +45,10 @@ public class ConfigManager {
             );
         }
 
-        config.setPort(fileConfig.getInt("port", 8080));
-        config.setUsername(fileConfig.getString("username", "admin"));
-        config.setPassword(fileConfig.getString("password", "newspaper"));
-        config.setIpv6(fileConfig.getBoolean("ipv6", false));
-        config.setLanguage(fileConfig.getString("language", "en"));
+        loadFromYaml();
 
         logger.info("Configuration loaded (port=" + config.getPort()
+                + ", encryption=" + config.getEncryption()
                 + ", ipv6=" + config.isIpv6()
                 + ", language=" + config.getLanguage() + ")");
     }
@@ -66,13 +63,18 @@ public class ConfigManager {
             );
         }
 
+        loadFromYaml();
+
+        logger.info("Configuration reloaded");
+    }
+
+    private void loadFromYaml() {
         config.setPort(fileConfig.getInt("port", 8080));
         config.setUsername(fileConfig.getString("username", "admin"));
         config.setPassword(fileConfig.getString("password", "newspaper"));
         config.setIpv6(fileConfig.getBoolean("ipv6", false));
         config.setLanguage(fileConfig.getString("language", "en"));
-
-        logger.info("Configuration reloaded");
+        config.setEncryption(fileConfig.getString("encryption", "chap-iem"));
     }
 
     public void saveConfig() {
@@ -81,6 +83,7 @@ public class ConfigManager {
         fileConfig.set("password", config.getPassword());
         fileConfig.set("ipv6", config.isIpv6());
         fileConfig.set("language", config.getLanguage());
+        fileConfig.set("encryption", config.getEncryption());
 
         try {
             fileConfig.save(configFile);
