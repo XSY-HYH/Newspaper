@@ -202,48 +202,6 @@ Send a broadcast message to all players (supports `&` color codes).
 { "type": "console_broadcast", "data": { "message": "&aServer will restart in 5 minutes!" } }
 ```
 
-## Building
-
-```bash
-./gradlew build
-```
-
-The output JAR is located at `build/libs/Newspaper-1.1.1.jar`.
-
-## Project Structure
-
-```
-src/main/java/com/newspaper/
-├── NewspaperPlugin.java          # Plugin entry point
-├── abstraction/                  # Version compatibility layer
-│   ├── PlatformAbstraction.java  # Unified API interface
-│   ├── Paper120.java             # Paper 1.20.x adapter
-│   └── Paper121.java             # Paper 1.21.x adapter
-├── chap/                         # CHAP-IEM protocol
-│   ├── Chapiem.java              # Protocol state machine
-│   ├── ChapiemSession.java       # Session state management
-│   └── CryptoUtil.java           # AES-256-GCM encryption utilities
-├── config/                       # Configuration management
-│   ├── ConfigManager.java        # Load/save/reload config
-│   └── NewspaperConfig.java      # Config data holder
-├── encryption/                   # Encryption provider abstraction
-│   ├── EncryptionMode.java       # Enum: chap-iem, tls, ssh
-│   ├── EncryptionProvider.java   # Provider interface
-│   ├── ChapIemProvider.java      # CHAP-IEM implementation
-│   ├── TlsProvider.java          # TLS (wss://) implementation
-│   ├── SshProvider.java          # SSH key exchange implementation
-│   └── BouncyCastleCertGenerator.java  # Self-signed cert via keytool
-├── handler/                      # Operation handlers (12 types)
-├── i18n/                         # Internationalization
-│   ├── I18nManager.java          # Language loader & validator
-│   └── MessageKey.java           # Translation key constants
-└── ws/                           # WebSocket server
-    ├── NewspaperWebSocketServer.java  # Server lifecycle
-    ├── WsSession.java            # Per-client session handler
-    ├── WsFrame.java              # RFC 6455 frame parser/builder
-    └── MessageDispatcher.java    # Operation routing
-```
-
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
