@@ -1,6 +1,5 @@
 package com.newspaper.encryption;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
@@ -14,6 +13,10 @@ public interface EncryptionProvider {
                                          String username, String password,
                                          Function<String, String> messageProcessor);
 
+    ClientSessionHandler createClientSessionHandler(InputStream in, OutputStream out,
+                                                     String username, String password,
+                                                     Function<String, String> messageProcessor);
+
     boolean requiresTlsSocket();
 
     interface SessionHandler {
@@ -25,6 +28,21 @@ public interface EncryptionProvider {
         boolean isAuthenticated();
 
         byte[] preparePush(byte[] data) throws EncryptionException;
+
+        byte[] getCurrentKey();
+    }
+
+    interface ClientSessionHandler {
+
+        byte[] buildAuthRequest() throws EncryptionException;
+
+        byte[] processServerResponse(byte[] rawPayload) throws EncryptionException;
+
+        boolean isAuthenticated();
+
+        byte[] preparePush(byte[] data) throws EncryptionException;
+
+        byte[] prepareRequest(byte[] data) throws EncryptionException;
 
         byte[] getCurrentKey();
     }

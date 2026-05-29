@@ -7,9 +7,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.Base64;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
@@ -26,7 +24,7 @@ public class ReverseProxyClient {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Thread connectThread;
     private Socket socket;
-    private EncryptionProvider.SessionHandler sessionHandler;
+    private EncryptionProvider.ClientSessionHandler clientHandler;
 
     public ReverseProxyClient(NewspaperConfig config, EncryptionProvider encryptionProvider,
                               MessageDispatcher dispatcher, Logger logger) {
@@ -67,10 +65,16 @@ public class ReverseProxyClient {
 
                 performWebSocketHandshake(in, out, host, port);
 
-                sessionHandler = encryptionProvider.createSessionHandler(
+                clientHandler = encryptionProvider.createClientSessionHandler(
                         in, out, config.getUsername(), config.getPassword(), dispatcher::dispatch);
 
-                logger.info("Reverse proxy connected to " + config.getReverseProxyUrl());
+                byte[] authRequest = clientHandler.buildAuthRequest();
+                synchronized (out) {
+                    out.write(WsFrame.createBinaryFrame(authRequest));
+                    out.flush();
+                }
+
+                logger.info("Auth request sent, waiting for server response...");
 
                 runSession(in, out);
 
@@ -143,7 +147,7 @@ public class ReverseProxyClient {
 
                 if (frame.opcode() == WsFrame.OPCODE_BINARY) {
                     try {
-                        byte[] response = sessionHandler.processIncoming(frame.payload());
+                        byte[] response = clientHandler.processServerResponse(frame.payload());
                         if (response != null) {
                             synchronized (out) {
                                 out.write(WsFrame.createBinaryFrame(response));
@@ -171,12 +175,12 @@ public class ReverseProxyClient {
     }
 
     public void sendBinary(byte[] data) {
-        if (sessionHandler == null || !sessionHandler.isAuthenticated()) {
+        if (clientHandler == null || !clientHandler.isAuthenticated()) {
             return;
         }
 
         try {
-            byte[] encrypted = sessionHandler.preparePush(data);
+            byte[] encrypted = clientHandler.preparePush(data);
             if (encrypted != null && socket != null && !socket.isClosed()) {
                 OutputStream out = socket.getOutputStream();
                 synchronized (out) {
@@ -197,7 +201,7 @@ public class ReverseProxyClient {
         } catch (IOException ignored) {
         }
         socket = null;
-        sessionHandler = null;
+        clientHandler = null;
     }
 
     public void stop() {
@@ -212,7 +216,7 @@ public class ReverseProxyClient {
     }
 
     public boolean isConnected() {
-        return socket != null && !socket.isClosed() && sessionHandler != null && sessionHandler.isAuthenticated();
+        return socket != null && !socket.isClosed() && clientHandler != null && clientHandler.isAuthenticated();
     }
 
     public boolean isRunning() {

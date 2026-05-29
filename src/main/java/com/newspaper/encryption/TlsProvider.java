@@ -71,6 +71,13 @@ public class TlsProvider implements EncryptionProvider {
     }
 
     @Override
+    public ClientSessionHandler createClientSessionHandler(InputStream in, OutputStream out,
+                                                            String username, String password,
+                                                            Function<String, String> messageProcessor) {
+        return new TlsClientSessionHandler(username, password, messageProcessor);
+    }
+
+    @Override
     public boolean requiresTlsSocket() {
         return true;
     }
@@ -166,6 +173,116 @@ public class TlsProvider implements EncryptionProvider {
 
             byte[] encrypted = CryptoUtil.encryptString(sessionId,
                     new com.google.gson.Gson().toJson(pushPacket));
+
+            sessionId = newId;
+            return encrypted;
+        }
+
+        @Override
+        public byte[] getCurrentKey() {
+            return sessionId != null ? sessionId : preSharedKey;
+        }
+    }
+
+    private static class TlsClientSessionHandler implements ClientSessionHandler {
+        private final String username;
+        private final byte[] preSharedKey;
+        private final Function<String, String> messageProcessor;
+        private boolean authenticated = false;
+        private byte[] sessionId = null;
+
+        TlsClientSessionHandler(String username, String password,
+                                 Function<String, String> messageProcessor) {
+            this.username = username;
+            this.preSharedKey = CryptoUtil.deriveKey(password);
+            this.messageProcessor = messageProcessor;
+        }
+
+        @Override
+        public byte[] buildAuthRequest() throws EncryptionException {
+            com.google.gson.JsonObject authMsg = new com.google.gson.JsonObject();
+            authMsg.addProperty("username", username);
+
+            return CryptoUtil.encryptString(preSharedKey, new com.google.gson.Gson().toJson(authMsg));
+        }
+
+        @Override
+        public byte[] processServerResponse(byte[] rawPayload) throws EncryptionException {
+            try {
+                if (!authenticated) {
+                    String decrypted = CryptoUtil.decryptString(preSharedKey, rawPayload);
+                    com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(decrypted)
+                            .getAsJsonObject();
+
+                    if ("ok".equals(json.get("status").getAsString()) && json.has("id")) {
+                        sessionId = Base64.getDecoder().decode(json.get("id").getAsString());
+                        authenticated = true;
+                        return null;
+                    }
+
+                    throw new EncryptionException("TLS login rejected by server");
+                }
+
+                String decrypted = CryptoUtil.decryptString(sessionId, rawPayload);
+                com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(decrypted)
+                        .getAsJsonObject();
+
+                if (json.has("id")) {
+                    sessionId = Base64.getDecoder().decode(json.get("id").getAsString());
+                }
+
+                if (json.has("data")) {
+                    String result = messageProcessor.apply(json.get("data").getAsString());
+                    return result != null ? result.getBytes(java.nio.charset.StandardCharsets.UTF_8) : null;
+                }
+
+                return null;
+            } catch (EncryptionException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new EncryptionException("TLS client response processing failed: " + e.getMessage(), e);
+            }
+        }
+
+        @Override
+        public boolean isAuthenticated() {
+            return authenticated;
+        }
+
+        @Override
+        public byte[] preparePush(byte[] data) throws EncryptionException {
+            if (!authenticated || sessionId == null) {
+                return null;
+            }
+
+            byte[] newId = CryptoUtil.generateId();
+
+            com.google.gson.JsonObject pushPacket = new com.google.gson.JsonObject();
+            pushPacket.addProperty("status", "ok");
+            pushPacket.addProperty("id", Base64.getEncoder().encodeToString(newId));
+            pushPacket.addProperty("data", new String(data, java.nio.charset.StandardCharsets.UTF_8));
+
+            byte[] encrypted = CryptoUtil.encryptString(sessionId,
+                    new com.google.gson.Gson().toJson(pushPacket));
+
+            sessionId = newId;
+            return encrypted;
+        }
+
+        @Override
+        public byte[] prepareRequest(byte[] data) throws EncryptionException {
+            if (!authenticated || sessionId == null) {
+                return null;
+            }
+
+            byte[] newId = CryptoUtil.generateId();
+
+            com.google.gson.JsonObject requestPacket = new com.google.gson.JsonObject();
+            requestPacket.addProperty("id", Base64.getEncoder().encodeToString(newId));
+            requestPacket.addProperty("data", new String(data, java.nio.charset.StandardCharsets.UTF_8));
+
+            byte[] encrypted = CryptoUtil.encryptString(sessionId,
+                    new com.google.gson.Gson().toJson(requestPacket));
 
             sessionId = newId;
             return encrypted;

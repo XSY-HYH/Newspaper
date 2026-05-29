@@ -36,6 +36,14 @@ public class ChapIemProvider implements EncryptionProvider {
     }
 
     @Override
+    public ClientSessionHandler createClientSessionHandler(InputStream in, OutputStream out,
+                                                            String username, String password,
+                                                            Function<String, String> messageProcessor) {
+        byte[] preSharedKey = CryptoUtil.deriveKey(password);
+        return new ChapIemClientSessionHandler(preSharedKey, username, messageProcessor);
+    }
+
+    @Override
     public boolean requiresTlsSocket() {
         return false;
     }
@@ -112,6 +120,121 @@ public class ChapIemProvider implements EncryptionProvider {
         @Override
         public byte[] getCurrentKey() {
             return chapSession.getCurrentKey();
+        }
+    }
+
+    private static class ChapIemClientSessionHandler implements ClientSessionHandler {
+        private byte[] preSharedKey;
+        private byte[] currentId;
+        private final String username;
+        private final Function<String, String> messageProcessor;
+        private boolean authenticated = false;
+
+        ChapIemClientSessionHandler(byte[] preSharedKey, String username,
+                                     Function<String, String> messageProcessor) {
+            this.preSharedKey = preSharedKey;
+            this.username = username;
+            this.messageProcessor = messageProcessor;
+        }
+
+        @Override
+        public byte[] buildAuthRequest() throws EncryptionException {
+            com.google.gson.JsonObject authMsg = new com.google.gson.JsonObject();
+            authMsg.addProperty("username", username);
+            authMsg.addProperty("encryption", "chap-iem");
+
+            return CryptoUtil.encryptString(preSharedKey, new com.google.gson.Gson().toJson(authMsg));
+        }
+
+        @Override
+        public byte[] processServerResponse(byte[] rawPayload) throws EncryptionException {
+            try {
+                if (!authenticated) {
+                    String decrypted = CryptoUtil.decryptString(preSharedKey, rawPayload);
+
+                    if (decrypted.startsWith("OK:")) {
+                        String jsonStr = decrypted.substring(3);
+                        com.google.gson.JsonObject response = com.google.gson.JsonParser.parseString(jsonStr)
+                                .getAsJsonObject();
+
+                        String idBase64 = response.get("id").getAsString();
+                        currentId = Base64.getDecoder().decode(idBase64);
+                        authenticated = true;
+                        return null;
+                    }
+
+                    throw new EncryptionException("Login rejected by server");
+                }
+
+                String decrypted = CryptoUtil.decryptString(currentId, rawPayload);
+                com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(decrypted)
+                        .getAsJsonObject();
+
+                if (json.has("id")) {
+                    String idBase64 = json.get("id").getAsString();
+                    currentId = Base64.getDecoder().decode(idBase64);
+                }
+
+                if (json.has("data")) {
+                    String result = messageProcessor.apply(json.get("data").getAsString());
+                    return result != null ? result.getBytes(java.nio.charset.StandardCharsets.UTF_8) : null;
+                }
+
+                return null;
+            } catch (EncryptionException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new EncryptionException("Client response processing failed: " + e.getMessage(), e);
+            }
+        }
+
+        @Override
+        public boolean isAuthenticated() {
+            return authenticated;
+        }
+
+        @Override
+        public byte[] preparePush(byte[] data) throws EncryptionException {
+            if (!authenticated || currentId == null) {
+                return null;
+            }
+
+            byte[] newId = CryptoUtil.generateId();
+
+            com.google.gson.JsonObject pushPacket = new com.google.gson.JsonObject();
+            pushPacket.addProperty("status", "ok");
+            pushPacket.addProperty("id", Base64.getEncoder().encodeToString(newId));
+            pushPacket.addProperty("data", new String(data, java.nio.charset.StandardCharsets.UTF_8));
+
+            byte[] encrypted = CryptoUtil.encryptString(currentId,
+                    new com.google.gson.Gson().toJson(pushPacket));
+
+            currentId = newId;
+            return encrypted;
+        }
+
+        @Override
+        public byte[] prepareRequest(byte[] data) throws EncryptionException {
+            if (!authenticated || currentId == null) {
+                return null;
+            }
+
+            byte[] newId = CryptoUtil.generateId();
+
+            com.google.gson.JsonObject requestPacket = new com.google.gson.JsonObject();
+            requestPacket.addProperty("id", Base64.getEncoder().encodeToString(newId));
+            requestPacket.addProperty("data", new String(data, java.nio.charset.StandardCharsets.UTF_8));
+
+            byte[] encrypted = CryptoUtil.encryptString(currentId,
+                    new com.google.gson.Gson().toJson(requestPacket));
+
+            currentId = newId;
+            return encrypted;
+        }
+
+        @Override
+        public byte[] getCurrentKey() {
+            return currentId != null ? currentId : preSharedKey;
         }
     }
 }

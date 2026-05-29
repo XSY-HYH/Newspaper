@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Signature;
@@ -43,6 +44,13 @@ public class SshProvider implements EncryptionProvider {
                                                 String username, String password,
                                                 Function<String, String> messageProcessor) {
         return new SshSessionHandler(in, out, username, password, messageProcessor);
+    }
+
+    @Override
+    public ClientSessionHandler createClientSessionHandler(InputStream in, OutputStream out,
+                                                            String username, String password,
+                                                            Function<String, String> messageProcessor) {
+        return new SshClientSessionHandler(in, out, username, password, messageProcessor);
     }
 
     @Override
@@ -135,7 +143,6 @@ public class SshProvider implements EncryptionProvider {
             Signature sig = Signature.getInstance(SIGNATURE_ALGORITHM);
             sig.initVerify(clientPubKey);
             sig.update(expectedSignature);
-
             if (!sig.verify(signatureBytes)) {
                 throw new EncryptionException("SSH key exchange: client signature verification failed");
             }
@@ -231,6 +238,224 @@ public class SshProvider implements EncryptionProvider {
 
             byte[] encrypted = CryptoUtil.encryptString(sessionId,
                     new com.google.gson.Gson().toJson(pushPacket));
+
+            sessionId = newId;
+            return encrypted;
+        }
+
+        @Override
+        public byte[] getCurrentKey() {
+            return sessionId != null ? sessionId : preSharedKey;
+        }
+    }
+
+    private static class SshClientSessionHandler implements ClientSessionHandler {
+        private final InputStream in;
+        private final OutputStream out;
+        private final String username;
+        private final byte[] preSharedKey;
+        private final Function<String, String> messageProcessor;
+        private boolean authenticated = false;
+        private byte[] sessionId = null;
+        private KeyPair clientKeyPair;
+        private int keyExchangePhase = 0;
+
+        SshClientSessionHandler(InputStream in, OutputStream out,
+                                 String username, String password,
+                                 Function<String, String> messageProcessor) {
+            this.in = in;
+            this.out = out;
+            this.username = username;
+            this.preSharedKey = CryptoUtil.deriveKey(password);
+            this.messageProcessor = messageProcessor;
+        }
+
+        @Override
+        public byte[] buildAuthRequest() throws EncryptionException {
+            try {
+                clientKeyPair = generateKeyPair();
+                keyExchangePhase = 1;
+
+                byte[] clientPubKeyBytes = clientKeyPair.getPublic().getEncoded();
+
+                byte[] challenge = new byte[32];
+                new SecureRandom().nextBytes(challenge);
+
+                byte[] signatureInput = CryptoUtil.sha256(
+                        concatenate(clientPubKeyBytes, challenge));
+
+                Signature sig = Signature.getInstance(SIGNATURE_ALGORITHM);
+                sig.initSign(clientKeyPair.getPrivate());
+                sig.update(signatureInput);
+                byte[] signatureBytes = sig.sign();
+
+                ByteBuffer buffer = ByteBuffer.allocate(
+                        4 + 4 + clientPubKeyBytes.length
+                                + 4 + challenge.length
+                                + 4 + signatureBytes.length);
+                buffer.putInt(1);
+                buffer.putInt(clientPubKeyBytes.length);
+                buffer.put(clientPubKeyBytes);
+                buffer.putInt(challenge.length);
+                buffer.put(challenge);
+                buffer.putInt(signatureBytes.length);
+                buffer.put(signatureBytes);
+
+                return buffer.array();
+            } catch (Exception e) {
+                throw new EncryptionException("SSH client key exchange phase 1 failed: " + e.getMessage(), e);
+            }
+        }
+
+        @Override
+        public byte[] processServerResponse(byte[] rawPayload) throws EncryptionException {
+            try {
+                if (keyExchangePhase == 1) {
+                    return handlePhase2Response(rawPayload);
+                }
+
+                if (keyExchangePhase == 2) {
+                    return handlePhase3Response(rawPayload);
+                }
+
+                String decrypted = CryptoUtil.decryptString(sessionId, rawPayload);
+                com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(decrypted)
+                        .getAsJsonObject();
+
+                if (json.has("id")) {
+                    sessionId = Base64.getDecoder().decode(json.get("id").getAsString());
+                }
+
+                if (json.has("data")) {
+                    String result = messageProcessor.apply(json.get("data").getAsString());
+                    return result != null ? result.getBytes(StandardCharsets.UTF_8) : null;
+                }
+
+                return null;
+            } catch (EncryptionException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new EncryptionException("SSH client response processing failed: " + e.getMessage(), e);
+            }
+        }
+
+        private byte[] handlePhase2Response(byte[] rawPayload) throws Exception {
+            ByteBuffer buffer = ByteBuffer.wrap(rawPayload);
+            int phase = buffer.getInt();
+
+            if (phase != 2) {
+                throw new EncryptionException("Expected phase 2 response, got: " + phase);
+            }
+
+            int serverPubKeyLen = buffer.getInt();
+            byte[] serverPubKeyBytes = new byte[serverPubKeyLen];
+            buffer.get(serverPubKeyBytes);
+
+            int challengeLen = buffer.getInt();
+            byte[] challenge = new byte[challengeLen];
+            buffer.get(challenge);
+
+            int signatureLen = buffer.getInt();
+            byte[] signatureBytes = new byte[signatureLen];
+            buffer.get(signatureBytes);
+
+            KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+            X509EncodedKeySpec keySpec = new X509EncodedKeySpec(serverPubKeyBytes);
+            PublicKey serverPubKey = keyFactory.generatePublic(keySpec);
+
+            byte[] expectedSigData = CryptoUtil.sha256(
+                    concatenate(serverPubKeyBytes, challenge));
+
+            Signature sig = Signature.getInstance(SIGNATURE_ALGORITHM);
+            sig.initVerify(serverPubKey);
+            sig.update(expectedSigData);
+
+            if (!sig.verify(signatureBytes)) {
+                throw new EncryptionException("SSH client: server signature verification failed");
+            }
+
+            byte[] sharedSecret = CryptoUtil.sha256(concatenate(
+                    clientKeyPair.getPublic().getEncoded(),
+                    preSharedKey,
+                    serverPubKeyBytes
+            ));
+
+            sessionId = CryptoUtil.sha256(concatenate(
+                    clientKeyPair.getPublic().getEncoded(),
+                    serverPubKeyBytes,
+                    sharedSecret,
+                    preSharedKey
+            ));
+
+            keyExchangePhase = 2;
+
+            com.google.gson.JsonObject authData = new com.google.gson.JsonObject();
+            authData.addProperty("username", username);
+
+            byte[] encAuth = CryptoUtil.encryptString(sessionId, new com.google.gson.Gson().toJson(authData));
+
+            ByteBuffer response = ByteBuffer.allocate(4 + 4 + encAuth.length);
+            response.putInt(2);
+            response.putInt(encAuth.length);
+            response.put(encAuth);
+
+            return response.array();
+        }
+
+        private byte[] handlePhase3Response(byte[] rawPayload) throws Exception {
+            String decrypted = CryptoUtil.decryptString(sessionId, rawPayload);
+            com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(decrypted)
+                    .getAsJsonObject();
+
+            if ("ok".equals(json.get("status").getAsString()) && json.has("id")) {
+                sessionId = Base64.getDecoder().decode(json.get("id").getAsString());
+                authenticated = true;
+                keyExchangePhase = 0;
+                return null;
+            }
+
+            throw new EncryptionException("SSH client: login rejected by server");
+        }
+
+        @Override
+        public boolean isAuthenticated() {
+            return authenticated;
+        }
+
+        @Override
+        public byte[] preparePush(byte[] data) throws EncryptionException {
+            if (!authenticated || sessionId == null) {
+                return null;
+            }
+
+            byte[] newId = CryptoUtil.generateId();
+
+            com.google.gson.JsonObject pushPacket = new com.google.gson.JsonObject();
+            pushPacket.addProperty("status", "ok");
+            pushPacket.addProperty("id", Base64.getEncoder().encodeToString(newId));
+            pushPacket.addProperty("data", new String(data, StandardCharsets.UTF_8));
+
+            byte[] encrypted = CryptoUtil.encryptString(sessionId,
+                    new com.google.gson.Gson().toJson(pushPacket));
+
+            sessionId = newId;
+            return encrypted;
+        }
+
+        @Override
+        public byte[] prepareRequest(byte[] data) throws EncryptionException {
+            if (!authenticated || sessionId == null) {
+                return null;
+            }
+
+            byte[] newId = CryptoUtil.generateId();
+
+            com.google.gson.JsonObject requestPacket = new com.google.gson.JsonObject();
+            requestPacket.addProperty("id", Base64.getEncoder().encodeToString(newId));
+            requestPacket.addProperty("data", new String(data, StandardCharsets.UTF_8));
+
+            byte[] encrypted = CryptoUtil.encryptString(sessionId,
+                    new com.google.gson.Gson().toJson(requestPacket));
 
             sessionId = newId;
             return encrypted;
