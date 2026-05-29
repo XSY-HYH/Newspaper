@@ -18,14 +18,36 @@ Newspaper supports multiple encryption protocols so you can choose the one you t
 To change the encryption mode, set the `encryption` field in `config.yml`:
 
 ```yaml
-encryption: "chap-iem"  # Options: chap-iem, tls, ssh,
+encryption: "chap-iem"  # Options: chap-iem, tls, ssh
 ```
 
 > **Note**: Changing the encryption mode requires a config reload (`/newspaper reload`) to take effect. TLS mode generates a `keystore.jks` file in the plugin directory on first start.
 
+## Connection Modes
+
+Newspaper supports two connection modes: **direct** (the server listens for incoming connections) and **reverse proxy** (the server actively connects to a remote endpoint).
+
+| Mode | Config Value | Description |
+|------|-------------|-------------|
+| **Direct** | `direct` | Default. The plugin starts a WebSocket server and waits for clients to connect. |
+| **Reverse Proxy** | `reverse` | The plugin acts as a WebSocket client and connects to a remote server. If the connection fails, it retries every 5 minutes. |
+
+Use reverse proxy mode when your Minecraft server is behind a firewall or NAT and cannot accept incoming connections. You can set up a public relay server, and the plugin will initiate the connection outward.
+
+```yaml
+connection-mode: "reverse"
+reverse-proxy:
+  host: "relay.example.com"   # Remote server IP or domain
+  port: 8080                   # Remote server port
+  protocol: "ws"               # "ws" or "wss" (use "wss" if the relay uses TLS)
+```
+
+> **Note**: In reverse proxy mode, the `port` and `ipv6` settings are ignored since the plugin connects outbound rather than listening.
+
 ## Features
 
 - **Flexible Encryption** — Choose between CHAP-IEM, TLS, or SSH encryption protocols
+- **Reverse Proxy Support** — Outbound connection mode for servers behind NAT/firewall
 - **12 Operation Types** — Full remote server management capabilities
 - **Version Compatibility** — Supports Paper 1.20.x through 1.21.1 via an abstraction layer
 - **Internationalization** — Built-in English (`en`) and Chinese (`zh`) translations
@@ -36,12 +58,17 @@ encryption: "chap-iem"  # Options: chap-iem, tls, ssh,
 
 ```yaml
 # plugins/Newspaper/config.yml
-port: 8080              # WebSocket server port
-username: "admin"       # Login username
-password: "newspaper"   # Login password
-ipv6: false             # Enable IPv6 support
-language: "en"          # UI language (en / zh)
-encryption: "chap-iem"  # Encryption mode (chap-iem / tls / ssh)
+port: 8080                      # WebSocket server port (direct mode only)
+username: "admin"               # Login username
+password: "newspaper"           # Login password
+ipv6: false                     # Enable IPv6 support (direct mode only)
+language: "en"                  # UI language (en / zh)
+encryption: "chap-iem"          # Encryption mode (chap-iem / tls / ssh)
+connection-mode: "direct"       # Connection mode (direct / reverse)
+reverse-proxy:
+  host: ""                      # Remote server address (reverse mode only)
+  port: 8080                    # Remote server port (reverse mode only)
+  protocol: "ws"                # Remote server protocol: ws or wss (reverse mode only)
 ```
 
 ## Commands
@@ -174,7 +201,7 @@ Update Newspaper configuration values.
 }
 ```
 
-Supported fields: `port`, `username`, `password`, `ipv6`, `language`, `encryption`.
+Supported fields: `port`, `username`, `password`, `ipv6`, `language`, `encryption`, `connection-mode`, `reverse-proxy.host`, `reverse-proxy.port`, `reverse-proxy.protocol`.
 
 > **Note**: Changes require a `config_reload` to take effect.
 

@@ -1,6 +1,7 @@
 # Gradle
 .gradle/
 build/
+bin/
 !gradle/wrapper/gradle-wrapper.jar
 !gradle/wrapper/gradle-wrapper.properties
 
@@ -34,3 +35,4 @@ logs/
 test-server/
 run/
 newspaper_client.py
+.trae/

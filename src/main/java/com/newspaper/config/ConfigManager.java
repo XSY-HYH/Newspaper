@@ -49,6 +49,7 @@ public class ConfigManager {
 
         logger.info("Configuration loaded (port=" + config.getPort()
                 + ", encryption=" + config.getEncryption()
+                + ", mode=" + config.getConnectionMode()
                 + ", ipv6=" + config.isIpv6()
                 + ", language=" + config.getLanguage() + ")");
     }
@@ -75,6 +76,10 @@ public class ConfigManager {
         config.setIpv6(fileConfig.getBoolean("ipv6", false));
         config.setLanguage(fileConfig.getString("language", "en"));
         config.setEncryption(fileConfig.getString("encryption", "chap-iem"));
+        config.setConnectionMode(fileConfig.getString("connection-mode", "direct"));
+        config.setReverseProxyHost(fileConfig.getString("reverse-proxy.host", ""));
+        config.setReverseProxyPort(fileConfig.getInt("reverse-proxy.port", 8080));
+        config.setReverseProxyProtocol(fileConfig.getString("reverse-proxy.protocol", "ws"));
     }
 
     public void saveConfig() {
@@ -84,6 +89,10 @@ public class ConfigManager {
         fileConfig.set("ipv6", config.isIpv6());
         fileConfig.set("language", config.getLanguage());
         fileConfig.set("encryption", config.getEncryption());
+        fileConfig.set("connection-mode", config.getConnectionMode());
+        fileConfig.set("reverse-proxy.host", config.getReverseProxyHost());
+        fileConfig.set("reverse-proxy.port", config.getReverseProxyPort());
+        fileConfig.set("reverse-proxy.protocol", config.getReverseProxyProtocol());
 
         try {
             fileConfig.save(configFile);

@@ -36,6 +36,7 @@ public class NewspaperWebSocketServer {
     private ServerSocket serverSocket;
     private Thread acceptThread;
     private EncryptionProvider encryptionProvider;
+    private ReverseProxyClient reverseProxyClient;
 
     public NewspaperWebSocketServer(NewspaperConfig config, MessageDispatcher dispatcher,
                                     Logger logger, File pluginDataFolder) {
@@ -50,10 +51,18 @@ public class NewspaperWebSocketServer {
             return;
         }
 
-        try {
-            EncryptionMode mode = EncryptionMode.fromConfig(config.getEncryption());
-            encryptionProvider = createProvider(mode);
+        EncryptionMode mode = EncryptionMode.fromConfig(config.getEncryption());
+        encryptionProvider = createProvider(mode);
 
+        if (config.isReverseProxy()) {
+            startReverseProxy();
+        } else {
+            startDirect();
+        }
+    }
+
+    private void startDirect() {
+        try {
             serverSocket = encryptionProvider.createServerSocket(config.getPort(), config.isIpv6());
 
             running.set(true);
@@ -63,11 +72,22 @@ public class NewspaperWebSocketServer {
             acceptThread.start();
 
             logger.info("WebSocket server started on port " + config.getPort()
-                    + " (encryption: " + mode.getConfigValue() + ")"
+                    + " (encryption: " + config.getEncryption() + ")"
                     + (config.isIpv6() ? " (IPv6)" : " (IPv4)"));
         } catch (Exception e) {
             logger.log(Level.SEVERE, "Failed to start WebSocket server: " + e.getMessage(), e);
         }
+    }
+
+    private void startReverseProxy() {
+        running.set(true);
+
+        reverseProxyClient = new ReverseProxyClient(config, encryptionProvider, dispatcher, logger);
+        reverseProxyClient.start();
+
+        logger.info("WebSocket server started in reverse proxy mode"
+                + " (encryption: " + config.getEncryption() + ")"
+                + " -> " + config.getReverseProxyUrl());
     }
 
     private EncryptionProvider createProvider(EncryptionMode mode) {
@@ -128,6 +148,11 @@ public class NewspaperWebSocketServer {
         }
         sessions.clear();
 
+        if (reverseProxyClient != null) {
+            reverseProxyClient.stop();
+            reverseProxyClient = null;
+        }
+
         try {
             if (serverSocket != null && !serverSocket.isClosed()) {
                 serverSocket.close();
@@ -146,6 +171,10 @@ public class NewspaperWebSocketServer {
                 session.sendBinary(data);
             }
         }
+
+        if (reverseProxyClient != null && reverseProxyClient.isConnected()) {
+            reverseProxyClient.sendBinary(data);
+        }
     }
 
     public boolean isRunning() {
@@ -153,6 +182,10 @@ public class NewspaperWebSocketServer {
     }
 
     public int getActiveConnections() {
-        return sessions.size();
+        int count = sessions.size();
+        if (reverseProxyClient != null && reverseProxyClient.isConnected()) {
+            count++;
+        }
+        return count;
     }
 }

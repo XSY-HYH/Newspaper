@@ -7,7 +7,11 @@ public class NewspaperConfig {
     private String password = "newspaper";
     private boolean ipv6 = false;
     private String language = "en";
-    private String encryption = "ssh";
+    private String encryption = "chap-iem";
+    private String connectionMode = "direct";
+    private String reverseProxyHost = "";
+    private int reverseProxyPort = 8080;
+    private String reverseProxyProtocol = "ws";
 
     public int getPort() {
         return port;
@@ -55,5 +59,45 @@ public class NewspaperConfig {
 
     public void setEncryption(String encryption) {
         this.encryption = encryption;
+    }
+
+    public String getConnectionMode() {
+        return connectionMode;
+    }
+
+    public void setConnectionMode(String connectionMode) {
+        this.connectionMode = connectionMode;
+    }
+
+    public boolean isReverseProxy() {
+        return "reverse".equalsIgnoreCase(connectionMode);
+    }
+
+    public String getReverseProxyHost() {
+        return reverseProxyHost;
+    }
+
+    public void setReverseProxyHost(String reverseProxyHost) {
+        this.reverseProxyHost = reverseProxyHost;
+    }
+
+    public int getReverseProxyPort() {
+        return reverseProxyPort;
+    }
+
+    public void setReverseProxyPort(int reverseProxyPort) {
+        this.reverseProxyPort = reverseProxyPort;
+    }
+
+    public String getReverseProxyProtocol() {
+        return reverseProxyProtocol;
+    }
+
+    public void setReverseProxyProtocol(String reverseProxyProtocol) {
+        this.reverseProxyProtocol = reverseProxyProtocol;
+    }
+
+    public String getReverseProxyUrl() {
+        return reverseProxyProtocol + "://" + reverseProxyHost + ":" + reverseProxyPort + "/";
     }
 }

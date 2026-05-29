@@ -4,3 +4,8 @@ password: "newspaper"
 ipv6: false
 language: "en"
 encryption: "chap-iem"
+connection-mode: "direct"
+reverse-proxy:
+  host: ""
+  port: 8080
+  protocol: "ws"
