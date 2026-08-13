@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <AssemblyName>NewspaperRemote</AssemblyName>
+    <RootNamespace>MorningCat.Modules</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="MorningCat.dll">
+      <HintPath>..\..\Lib\MorningCat.dll</HintPath>
+    </Reference>
+    <Reference Include="ModuleManagerLib.dll">
+      <HintPath>..\..\Lib\ModuleManagerLib.dll</HintPath>
+    </Reference>
+    <Reference Include="logs.dll">
+      <HintPath>..\..\Lib\logs.dll</HintPath>
+    </Reference>
+    <Reference Include="OneBotLib.dll">
+      <HintPath>..\..\Lib\OneBotLib.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

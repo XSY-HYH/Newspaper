@@ -36,3 +36,15 @@ test-server/
 run/
 newspaper_client.py
 .trae/
+
+# Legacy source (replaced by multi-module structure)
+src/
+
+# Test templates and scripts
+test-template-26.2/
+test-template-26.2.zip
+test_reverse_proxy.py
+
+# C# build artifacts
+NewspaperRemote/bin/
+NewspaperRemote/obj/

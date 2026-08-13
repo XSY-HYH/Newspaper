@@ -1,103 +1,111 @@
 # Newspaper
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Paper](https://img.shields.io/badge/Paper-1.20--1.21.1-blue)](https://papermc.io)
+[![Paper](https://img.shields.io/badge/Paper-1.21.1--26.2-blue)](https://papermc.io)
+[![Fabric](https://img.shields.io/badge/Fabric-1.21.1--26.2-orange)](https://fabricmc.net)
 
-A Paper plugin that enables remote server management via WebSocket with configurable encryption.
+A cross-platform Minecraft plugin/mod for remote server management via WebSocket with mutual TLS authentication.
 
-## Encryption Modes
+[中文文档](docs/README.zh.md)
 
-Newspaper supports multiple encryption protocols so you can choose the one you trust. If you don't want to use the default CHAP-IEM protocol, you can switch to TLS or SSH — standard, well-audited protocols that are widely trusted in the industry.
+## Features
 
-| Mode | Config Value | Transport | Description |
-|------|-------------|-----------|-------------|
-| **CHAP-IEM** | `chap-iem` | `ws://` | Default. Application-layer encryption with per-operation key rotation and forward secrecy. Implementation from [ZIM (Zigzag Interaction Model)](https://github.com/XSY-HYH/ZIM-Zigzag-Interaction-Model). |
-| **TLS** | `tls` | `wss://` | Standard TLS 1.2/1.3 encryption at the transport layer. Auto-generates a self-signed certificate on first start. Clients connect via `wss://`. |
-| **SSH** | `ssh` | `ws://` | SSH-style RSA key exchange with signature verification, then AES-256-GCM for session encryption. Provides public-key authentication similar to OpenSSH. |
+- **Mutual TLS (mTLS)** — Password-derived certificate generation, zero manual cert exchange
+- **Dual Platform** — Paper (1.21.1–26.2) and Fabric (1.21.1–26.2) from a shared codebase
+- **Shell Command Execution** — Run system shell commands remotely with configurable timeout
+- **File Transfer** — Upload and download files via Base64 over WebSocket
+- **Reverse Proxy** — Outbound connection mode for servers behind NAT/firewall
+- **PROXY Protocol** — Optional v1/v2 support for client IP detection behind reverse proxies
+- **Audit Logging** — Tamper-proof audit log with continuous file locking
+- **Password Security** — Auto-generated 128-bit keys with strength validation
+- **Internationalization** — Built-in English (`en`) and Chinese (`zh`) translations
+- **Config Fault Tolerance** — Invalid config entries are automatically reset to defaults with warnings
 
-To change the encryption mode, set the `encryption` field in `config.yml`:
+## Version Support
 
-```yaml
-encryption: "chap-iem"  # Options: chap-iem, tls, ssh
-```
+| Platform | Module | Minecraft Versions | Java |
+|----------|--------|--------------------|------|
+| Paper | `paper` | 1.21.1–26.2 | 21+ |
+| Fabric | `fabric` | 26.1–26.2 | 25 |
+| Fabric (Legacy) | `fabric-legacy` | 1.21.1–1.21.11 | 21 |
 
-> **Note**: Changing the encryption mode requires a config reload (`/newspaper reload`) to take effect. TLS mode generates a `keystore.jks` file in the plugin directory on first start.
+> **Note:** Fabric uses two separate modules due to a breaking change in Minecraft 26.1 (Mojang removed class obfuscation, making Yarn intermediary mappings unavailable for 26.1+).
+
+## Alpha Version Notice
+
+When you see a version tagged **Alpha** (e.g. `v1.0.0-alpha.1`), it is likely a release with known issues that has not been pulled. Alpha versions may contain unfinished features, known crash risks, or performance problems, and are primarily intended for early testing and feedback collection.
+
+## Authentication
+
+Newspaper uses pure mTLS. Both server and client derive identical CA/server/client certificates from the shared password using BouncyCastle (secp256r1 + SHA-256). The TLS handshake performs mutual authentication — no application-layer auth messages needed.
+
+If no password is configured, a 128-bit key is auto-generated, validated against security rules (uppercase, lowercase, digits), and printed to the console.
 
 ## Connection Modes
 
-Newspaper supports two connection modes: **direct** (the server listens for incoming connections) and **reverse proxy** (the server actively connects to a remote endpoint).
-
 | Mode | Config Value | Description |
 |------|-------------|-------------|
-| **Direct** | `direct` | Default. The plugin starts a WebSocket server and waits for clients to connect. |
-| **Reverse Proxy** | `reverse` | The plugin acts as a WebSocket client and connects to a remote server. If the connection fails, it retries every 5 minutes. |
-
-Use reverse proxy mode when your Minecraft server is behind a firewall or NAT and cannot accept incoming connections. You can set up a public relay server, and the plugin will initiate the connection outward.
+| **Direct** | `direct` | Server listens for incoming mTLS connections |
+| **Reverse Proxy** | `reverse` | Server connects outward to a remote relay, retries every 5 min |
 
 ```yaml
 connection-mode: "reverse"
 reverse-proxy:
-  host: "relay.example.com"   # Remote server IP or domain
-  port: 8080                   # Remote server port
-  protocol: "ws"               # "ws" or "wss" (use "wss" if the relay uses TLS)
+  host: "relay.example.com"
+  port: 8080
+  protocol: "wss"
 ```
-
-> **Note**: In reverse proxy mode, the `port` and `ipv6` settings are ignored since the plugin connects outbound rather than listening.
-
-## Features
-
-- **Flexible Encryption** — Choose between CHAP-IEM, TLS, or SSH encryption protocols
-- **Reverse Proxy Support** — Outbound connection mode for servers behind NAT/firewall
-- **12 Operation Types** — Full remote server management capabilities
-- **Version Compatibility** — Supports Paper 1.20.x through 1.21.1 via an abstraction layer
-- **Internationalization** — Built-in English (`en`) and Chinese (`zh`) translations
-- **IPv6 Support** — Configurable dual-stack networking
-- **Zero External Dependencies** — Pure Java WebSocket implementation
 
 ## Configuration
 
 ```yaml
-# plugins/Newspaper/config.yml
-port: 8080                      # WebSocket server port (direct mode only)
-username: "admin"               # Login username
-password: "newspaper"           # Login password
-ipv6: false                     # Enable IPv6 support (direct mode only)
-language: "en"                  # UI language (en / zh)
-encryption: "chap-iem"          # Encryption mode (chap-iem / tls / ssh)
-connection-mode: "direct"       # Connection mode (direct / reverse)
+port: 8080
+password: ""
+ipv6: false
+language: "en"
+connection-mode: "direct"
+enforce-password-strength: true
+proxy-protocol: false
 reverse-proxy:
-  host: ""                      # Remote server address (reverse mode only)
-  port: 8080                    # Remote server port (reverse mode only)
-  protocol: "ws"                # Remote server protocol: ws or wss (reverse mode only)
+  host: ""
+  port: 8080
+  protocol: "wss"
+shell:
+  timeout: 30
+file-transfer:
+  enabled: true
+  root: ""
+  restrict-upload: true
+  disable: false
+audit-log:
+  enabled: true
 ```
+
+Invalid config values are automatically reset to defaults with a `WARN` log. Supported validation rules:
+
+| Key | Rule |
+|-----|------|
+| `port` | 1–65535 |
+| `connection-mode` | `direct` or `reverse` |
+| `reverse-proxy.protocol` | `wss` or `ws` |
+| `shell.timeout` | >= 1 |
 
 ## Commands
 
 | Command | Permission | Description |
 |---------|-----------|-------------|
-| `/newspaper reload` | `newspaper.admin` | Reload configuration and restart WebSocket server |
+| `/newspaper reload` | OP | Reload config and restart WebSocket server |
+| `/newspaper modify <key> <value>` | OP | Modify a config field (e.g. `port 9090`) |
+| `/newspaper exec <command>` | OP | Execute a system shell command |
+| `/newspaper lang <file>` | OP | Load a language file (e.g. `en`, `zh`) |
 
 ## WebSocket API
 
 ### Connection
 
-Connect using the appropriate protocol based on your encryption mode:
-- **CHAP-IEM / SSH**: `ws://<server-ip>:<port>/`
-- **TLS**: `wss://<server-ip>:<port>/`
+Connect via `wss://<host>:<port>/` (mTLS required). All data frames must be **binary** (opcode `0x2`).
 
-All data frames must be **binary** (opcode `0x2`).
-
-### Authentication
-
-All encryption modes require authentication. The exact flow depends on the selected mode:
-
-- **CHAP-IEM**: The CHAP-IEM protocol handles both encryption and authentication. See [ZIM-Zigzag-Interaction-Model](https://github.com/XSY-HYH/ZIM-Zigzag-Interaction-Model) for the full specification.
-- **TLS**: Transport is encrypted by TLS. Application-layer authentication uses AES-256-GCM with the configured password as a pre-shared key, plus per-operation key rotation.
-- **SSH**: RSA key exchange with signature verification, followed by username/password authentication encrypted with the derived session key.
-
-### Operation Types
-
-All operation requests use the following JSON format:
+### Request Format
 
 ```json
 {
@@ -106,129 +114,49 @@ All operation requests use the following JSON format:
 }
 ```
 
-#### 1. `console_message` — Console Output
+### Operation Types
 
-Subscribe to server console log output.
+| Type | Description |
+|------|-------------|
+| `console_message` | Subscribe/poll/unsubscribe console output |
+| `chat_message` | Subscribe/poll/unsubscribe chat messages |
+| `command` | Execute a console command |
+| `command2` | Execute a command as a specific player |
+| `player_join` | Subscribe/poll/unsubscribe player join events |
+| `player_quit` | Subscribe/poll/unsubscribe player quit events |
+| `online_players` | Get online player list with details |
+| `server_info` | Get server, Java, and memory info |
+| `config_modify` | Modify configuration fields |
+| `config_reload` | Reload configuration and restart WebSocket |
+| `shutdown` | Shut down the Minecraft server |
+| `console_broadcast` | Broadcast a message to all players |
+| `shell_command` | Execute a system shell command |
+| `file_upload` | Upload a file (Base64 content) |
+| `file_download` | Download a file (returns Base64 content) |
 
+### Examples
+
+**Shell command:**
 ```json
-{ "type": "console_message", "data": { "action": "subscribe" } }
-{ "type": "console_message", "data": { "action": "poll" } }
-{ "type": "console_message", "data": { "action": "unsubscribe" } }
+{ "type": "shell_command", "data": { "command": "ls -la", "timeout": 10 } }
 ```
 
-#### 2. `chat_message` — Chat Messages
-
-Subscribe to in-game chat messages.
-
+**File upload:**
 ```json
-{ "type": "chat_message", "data": { "action": "subscribe" } }
-{ "type": "chat_message", "data": { "action": "poll" } }
-{ "type": "chat_message", "data": { "action": "unsubscribe" } }
+{ "type": "file_upload", "data": { "path": "backup/world.yml", "content": "<base64>" } }
 ```
 
-#### 3. `command` — Execute Console Command
-
-Execute a command as the console sender.
-
+**File download:**
 ```json
-{ "type": "command", "data": { "command": "say Hello World" } }
+{ "type": "file_download", "data": { "path": "config.yml" } }
 ```
 
-#### 4. `command2` — Execute Command as Player
+## Security
 
-Execute a command on behalf of a specific player.
-
-```json
-{ "type": "command2", "data": { "player": "Steve", "command": "spawn" } }
-```
-
-#### 5. `player_join` — Player Join Events
-
-Subscribe to player join events.
-
-```json
-{ "type": "player_join", "data": { "action": "subscribe" } }
-{ "type": "player_join", "data": { "action": "poll" } }
-{ "type": "player_join", "data": { "action": "unsubscribe" } }
-```
-
-#### 6. `player_quit` — Player Quit Events
-
-Subscribe to player quit events.
-
-```json
-{ "type": "player_quit", "data": { "action": "subscribe" } }
-{ "type": "player_quit", "data": { "action": "poll" } }
-{ "type": "player_quit", "data": { "action": "unsubscribe" } }
-```
-
-#### 7. `online_players` — Online Player List
-
-Get the current list of online players with details.
-
-```json
-{ "type": "online_players", "data": {} }
-```
-
-Response includes: player name, display name, UUID, world, gamemode, ping, and IP address.
-
-#### 8. `server_info` — Server Information
-
-Get comprehensive server information.
-
-```json
-{ "type": "server_info", "data": {} }
-```
-
-Response includes:
-- **Server**: version, name, Bukkit version, Minecraft version, API version
-- **Java**: version, vendor, home, OS name/arch/version, available processors
-- **Memory**: used/total/max/free (bytes and MB)
-- **World**: world count, online players, max players
-
-#### 9. `config_modify` — Modify Configuration
-
-Update Newspaper configuration values.
-
-```json
-{
-  "type": "config_modify",
-  "data": {
-    "port": 9090,
-    "ipv6": true,
-    "language": "zh"
-  }
-}
-```
-
-Supported fields: `port`, `username`, `password`, `ipv6`, `language`, `encryption`, `connection-mode`, `reverse-proxy.host`, `reverse-proxy.port`, `reverse-proxy.protocol`.
-
-> **Note**: Changes require a `config_reload` to take effect.
-
-#### 10. `config_reload` — Reload Configuration
-
-Reload the configuration and restart the WebSocket server with new settings.
-
-```json
-{ "type": "config_reload", "data": {} }
-```
-
-#### 11. `shutdown` — Shutdown Server
-
-Shut down the Minecraft server.
-
-```json
-{ "type": "shutdown", "data": { "reason": "Scheduled maintenance" } }
-```
-
-#### 12. `console_broadcast` — Broadcast as Console
-
-Send a broadcast message to all players (supports `&` color codes).
-
-```json
-{ "type": "console_broadcast", "data": { "message": "&aServer will restart in 5 minutes!" } }
-```
+- **Audit Log** — Records WSS connection IDs, login attempts (success/failure), remote addresses, and operation details. The log file (`audit.log`) is continuously locked during server runtime to prevent tampering. File transfer operations targeting `audit.log` are blocked.
+- **File Transfer Security** — Path traversal detection, optional upload directory restriction (server root by default), and global file transfer disable toggle.
+- **Password Strength** — Enforced by default. Disabling it triggers a red warning. Auto-generated keys meet complexity requirements (uppercase, lowercase, 3+ alphabetical, 6+ digits).
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
