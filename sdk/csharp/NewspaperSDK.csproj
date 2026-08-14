@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <AssemblyName>NewspaperSDK</AssemblyName>
+    <RootNamespace>Newspaper</RootNamespace>
+    <Version>2.0.0</Version>
+
+    <Description>Newspaper C# SDK — Minecraft mod remote operation client with mTLS</Description>
+  </PropertyGroup>
+
+</Project>

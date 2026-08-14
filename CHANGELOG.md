@@ -10,11 +10,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased] — 未发布
 
+## [2.1.0] - 2026-08-14
+
 ### Added | 新增
+- Chunked file transfer protocol: replaces single-packet Base64 with multi-packet chunked transfer (start -> meta -> chunks -> end), each chunk default 64KB, SHA-256 verification
+- 切片文件传输协议：用多包切片传输替换单包 Base64（start -> meta -> chunks -> end），每片默认 64KB，SHA-256 校验
+- Multi-language SDK (`sdk/`): pure API encapsulation for Python (`NewspaperSDK`), C# (`NewspaperSDK` class library), and Node.js (`NewspaperClient` / `NewspaperServer`), all with mTLS + WebSocket + chunked file transfer
+- 多语言 SDK（`sdk/`）：Python（`NewspaperSDK`）、C#（`NewspaperSDK` 类库）、Node.js（`NewspaperClient` / `NewspaperServer`）纯 API 封装，均含 mTLS + WebSocket + 切片文件传输
+- Shell command encoding parameter: clients can specify output encoding (e.g. `gbk` for Windows `cmd.exe`) to fix garbled text
+- Shell 命令编码参数：客户端可指定输出编码（如 Windows `cmd.exe` 的 `gbk`），修复乱码问题
 - Config fault tolerance: invalid entries automatically reset to defaults with WARN logs
 - 配置容错：无效配置项自动重置为默认值并打印 WARN 警告
 - `/newspaper lang <file>` command: switch language files at runtime
 - `/newspaper lang <file>` 命令：运行时切换语言文件
+- `FileTransferHandler` registered on all platforms (Paper / Fabric / Fabric-legacy) for chunked upload and download
+- `FileTransferHandler` 在所有平台（Paper / Fabric / Fabric-legacy）注册，支持切片上传和下载
+
+### Changed | 变更
+- File transfer packet size reduced from full-file Base64 to 64KB chunks, preventing oversized WebSocket frames
+- 文件传输数据包从整文件 Base64 缩减为 64KB 切片，避免 WebSocket 帧过大被阻断
+
+### Removed | 移除
+- `NewspaperRemote/` directory (C# standalone client), replaced by `sdk/csharp/` class library
+- `NewspaperRemote/` 目录（C# 独立客户端），由 `sdk/csharp/` 类库替代
 
 ## [2.0.0] - 2026-08-14
 

@@ -20,11 +20,17 @@ import ssl
 import struct
 import sys
 import tempfile
+import locale
+import signal
+import time
 from datetime import datetime, timedelta
 
 # ── secp256r1 curve order ──
 SECP256R1_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+# Global flag for shutdown
+SHUTDOWN_FLAG = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -319,8 +325,53 @@ def server_handshake(sock: socket.socket) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# JSON send / receive
+# JSON send / receive with encoding support
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def decode_payload(payload: bytes) -> str:
+    """Decode payload with automatic encoding detection."""
+    # Try common encodings in order
+    encodings = ['utf-8', 'gbk', 'gb2312', 'cp936', 'latin-1', 'windows-1252']
+    
+    for encoding in encodings:
+        try:
+            return payload.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    
+    # Fallback: replace invalid characters
+    return payload.decode('utf-8', errors='replace')
+
+def fix_encoding_recursive(obj):
+    """Recursively fix encoding issues in JSON objects."""
+    if isinstance(obj, dict):
+        return {fix_encoding_recursive(k): fix_encoding_recursive(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [fix_encoding_recursive(item) for item in obj]
+    elif isinstance(obj, str):
+        # Try to detect and fix common encoding issues
+        try:
+            # If the string contains garbled characters, try to recover
+            # This handles cases where UTF-8 bytes were decoded as GBK
+            if any(ord(c) >= 0x80 for c in obj):
+                # Try to encode as latin-1 and decode as utf-8
+                try:
+                    fixed = obj.encode('latin-1').decode('utf-8')
+                    return fixed
+                except (UnicodeEncodeError, UnicodeDecodeError):
+                    pass
+                
+                # Try to encode as cp1252 and decode as utf-8
+                try:
+                    fixed = obj.encode('cp1252').decode('utf-8')
+                    return fixed
+                except (UnicodeEncodeError, UnicodeDecodeError):
+                    pass
+        except:
+            pass
+        return obj
+    else:
+        return obj
 
 def send_json(sock: socket.socket, msg: dict, masked: bool = True):
     data = json.dumps(msg, ensure_ascii=False).encode("utf-8")
@@ -334,11 +385,24 @@ def recv_json(sock: socket.socket):
     opcode, payload = result
     if opcode == 0x8:  # Close frame
         return None
+    
+    # Try to decode the payload
+    text = decode_payload(payload)
+    
     try:
-        return json.loads(payload.decode("utf-8"))
-    except json.JSONDecodeError:
-        print(f"[raw] {payload.decode('utf-8', errors='replace')}")
-        return None
+        data = json.loads(text)
+        # Fix encoding issues in the parsed data
+        return fix_encoding_recursive(data)
+    except json.JSONDecodeError as e:
+        # If JSON parsing fails, try to clean up the text
+        try:
+            # Remove null bytes and control characters
+            cleaned = ''.join(char for char in text if ord(char) >= 32 or char == '\n')
+            data = json.loads(cleaned)
+            return fix_encoding_recursive(data)
+        except:
+            print(f"[raw] {text}")
+            return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -350,7 +414,7 @@ Available commands:
   server_info                    Get server information
   online_players                 List online players
   command <cmd>                  Execute Minecraft console command
-  shell <cmd>                    Execute system shell command
+  shell <cmd> [-e <enc>]         Execute system shell command (default UTF-8, use -e gbk for Windows)
   shutdown                       Shutdown Minecraft server
   config_reload                  Reload configuration
   config_modify <key> <value>    Modify config (e.g. port 9090)
@@ -359,8 +423,7 @@ Available commands:
   file_download <remote> <local> Download file
   raw <json>                     Send raw JSON message
   help                           Show this help
-  quit                           Exit\
-"""
+  quit                           Exit"""
 
 
 def parse_command(line: str):
@@ -383,9 +446,28 @@ def parse_command(line: str):
         return {"type": "command", "data": {"command": arg}}, None
     if cmd == "shell":
         if not arg:
-            print("Usage: shell <cmd>")
+            print("Usage: shell <cmd> [-e <encoding>]")
             return None
-        return {"type": "shell_command", "data": {"command": arg}}, None
+        parts = arg.split()
+        encoding = None
+        enc_idx = None
+        for i, p in enumerate(parts):
+            if p in ("-e", "--encoding") and i + 1 < len(parts):
+                encoding = parts[i + 1]
+                enc_idx = i
+                break
+        if enc_idx is not None:
+            del parts[enc_idx:enc_idx + 2]
+            command_str = " ".join(parts)
+        else:
+            command_str = arg
+        if not command_str:
+            print("Usage: shell <cmd> [-e <encoding>]")
+            return None
+        data = {"command": command_str}
+        if encoding:
+            data["encoding"] = encoding
+        return {"type": "shell_command", "data": data}, None
     if cmd == "shutdown":
         return {"type": "shutdown", "data": {}}, None
     if cmd == "config_reload":
@@ -437,97 +519,212 @@ def parse_command(line: str):
     return None
 
 
-def interactive_console(sock: socket.socket, masked: bool):
+def interactive_console(sock: socket.socket, masked: bool, is_server: bool = False):
+    """Interactive console with proper shutdown handling."""
+    global SHUTDOWN_FLAG
+    
     print(HELP_TEXT)
     print()
 
-    while True:
+    while not SHUTDOWN_FLAG:
         try:
-            line = input("newspaper> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nExiting...")
-            break
+            # Use non-blocking input check for server mode
+            if is_server:
+                import select
+                # Check if there's input available (non-blocking)
+                if select.select([sys.stdin], [], [], 0.1)[0]:
+                    line = sys.stdin.readline().strip()
+                else:
+                    # Check if socket is still connected
+                    try:
+                        # Non-blocking check for socket data
+                        sock.settimeout(0.1)
+                        try:
+                            # Try to receive with timeout, if data available process it
+                            pass
+                        except socket.timeout:
+                            pass
+                        finally:
+                            sock.settimeout(None)
+                    except:
+                        print("\n[Console] Connection lost")
+                        break
+                    continue
+            else:
+                # Client mode: blocking input
+                line = input("newspaper> ").strip()
+            
+            if not line:
+                continue
 
-        if not line:
-            continue
-
-        result = parse_command(line)
-        if result is None:
-            continue
-
-        msg, save_path = result
-        if msg == "quit":
-            break
-
-        try:
-            send_json(sock, msg, masked=masked)
-            response = recv_json(sock)
-
-            if response is None:
-                print("Connection closed by peer")
+            # Check for shutdown command from server side
+            if line.lower() == "shutdown":
+                print("[Console] Shutting down server...")
+                try:
+                    msg = {"type": "shutdown", "data": {}}
+                    send_json(sock, msg, masked=masked)
+                    response = recv_json(sock)
+                    if response:
+                        print(json.dumps(response, indent=2, ensure_ascii=False))
+                except:
+                    pass
+                SHUTDOWN_FLAG = True
                 break
 
-            if save_path and response.get("status") == "ok":
-                content = response.get("content", "")
-                try:
-                    with open(save_path, "wb") as f:
-                        f.write(base64.b64decode(content))
-                    print(f"File saved to: {save_path}")
-                except Exception as e:
-                    print(f"Error saving file: {e}")
-            else:
-                print(json.dumps(response, indent=2, ensure_ascii=False))
-        except ConnectionError as e:
-            print(f"Connection error: {e}")
+            result = parse_command(line)
+            if result is None:
+                continue
+
+            msg, save_path = result
+            if msg == "quit":
+                print("[Console] Exiting...")
+                break
+
+            try:
+                send_json(sock, msg, masked=masked)
+                response = recv_json(sock)
+
+                if response is None:
+                    print("Connection closed by peer")
+                    break
+
+                if save_path and response.get("status") == "ok":
+                    content = response.get("content", "")
+                    try:
+                        with open(save_path, "wb") as f:
+                            f.write(base64.b64decode(content))
+                        print(f"File saved to: {save_path}")
+                    except Exception as e:
+                        print(f"Error saving file: {e}")
+                else:
+                    print(json.dumps(response, indent=2, ensure_ascii=False, default=str))
+                    
+            except ConnectionError as e:
+                print(f"Connection error: {e}")
+                break
+            except BrokenPipeError:
+                print("Connection broken")
+                break
+            except Exception as e:
+                print(f"Error: {e}")
+                break
+                
+        except KeyboardInterrupt:
+            print("\n[Console] Interrupted by user")
+            SHUTDOWN_FLAG = True
             break
+        except EOFError:
+            print("\n[Console] EOF detected")
+            break
+        except Exception as e:
+            if not SHUTDOWN_FLAG:
+                print(f"[Console] Unexpected error: {e}")
+            break
+    
+    # Clean up
+    try:
+        # Send close frame if still connected
+        sock.sendall(_build_frame(b"", 0x8, masked))
+    except:
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Server mode
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def signal_handler(signum, frame):
+    """Handle SIGINT (Ctrl+C) gracefully."""
+    global SHUTDOWN_FLAG
+    print("\n[Signal] Received interrupt signal, shutting down...")
+    SHUTDOWN_FLAG = True
+
 def run_server(host: str, port: int, password: str):
+    global SHUTDOWN_FLAG
+    
+    # Setup signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     ctx = create_ssl_context(password, is_server=True)
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((host, port))
     srv.listen(5)
+    
+    # Set socket timeout for accept()
+    srv.settimeout(1.0)
 
     print(f"[Server] Listening on {host}:{port} (mTLS)")
 
-    while True:
+    while not SHUTDOWN_FLAG:
         try:
-            raw_sock, addr = srv.accept()
+            try:
+                raw_sock, addr = srv.accept()
+            except socket.timeout:
+                # Timeout to check SHUTDOWN_FLAG periodically
+                continue
+            except OSError as e:
+                if SHUTDOWN_FLAG:
+                    break
+                print(f"[Server] Accept error: {e}")
+                continue
+                
             print(f"[Server] Connection from {addr}")
 
-            ssl_sock = ctx.wrap_socket(raw_sock, server_side=True)
-            peer = ssl_sock.getpeercert()
-            cn = "?"
-            if peer:
-                for rdn in peer.get("subject", ()):
-                    for k, v in rdn:
-                        if k == "commonName":
-                            cn = v
-            print(f"[Server] TLS established, peer CN={cn}")
+            try:
+                ssl_sock = ctx.wrap_socket(raw_sock, server_side=True)
+                peer = ssl_sock.getpeercert()
+                cn = "?"
+                if peer:
+                    for rdn in peer.get("subject", ()):
+                        for k, v in rdn:
+                            if k == "commonName":
+                                cn = v
+                print(f"[Server] TLS established, peer CN={cn}")
 
-            if not server_handshake(ssl_sock):
-                print("[Server] WebSocket handshake failed")
+                if not server_handshake(ssl_sock):
+                    print("[Server] WebSocket handshake failed")
+                    ssl_sock.close()
+                    continue
+
+                print("[Server] WebSocket handshake completed")
+                interactive_console(ssl_sock, masked=False, is_server=True)
+
                 ssl_sock.close()
+                print("[Server] Client disconnected")
+            except KeyboardInterrupt:
+                print("\n[Server] Interrupted during client session")
+                SHUTDOWN_FLAG = True
+                try:
+                    raw_sock.close()
+                except:
+                    pass
+                break
+            except Exception as e:
+                print(f"[Server] Client session error: {e}")
+                try:
+                    raw_sock.close()
+                except:
+                    pass
                 continue
 
-            print("[Server] WebSocket handshake completed")
-            interactive_console(ssl_sock, masked=False)
-
-            ssl_sock.close()
-            print("[Server] Client disconnected")
         except KeyboardInterrupt:
-            print("\n[Server] Shutting down...")
+            print("\n[Server] Interrupted, shutting down...")
+            SHUTDOWN_FLAG = True
             break
         except Exception as e:
-            print(f"[Server] Error: {e}")
+            if not SHUTDOWN_FLAG:
+                print(f"[Server] Error: {e}")
+                time.sleep(0.5)
 
-    srv.close()
+    print("[Server] Shutting down...")
+    try:
+        srv.close()
+    except:
+        pass
+    print("[Server] Goodbye!")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -535,6 +732,12 @@ def run_server(host: str, port: int, password: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_client(host: str, port: int, password: str):
+    global SHUTDOWN_FLAG
+    
+    # Setup signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     ctx = create_ssl_context(password, is_server=False)
 
     raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -545,6 +748,10 @@ def run_client(host: str, port: int, password: str):
     try:
         ssl_sock = ctx.wrap_socket(raw_sock, server_hostname=host)
         ssl_sock.connect((host, port))
+    except KeyboardInterrupt:
+        print("\n[Client] Connection cancelled")
+        raw_sock.close()
+        return
     except Exception as e:
         print(f"[Client] Connection failed: {e}")
         raw_sock.close()
@@ -557,11 +764,17 @@ def run_client(host: str, port: int, password: str):
         client_handshake(ssl_sock)
         print("[Client] WebSocket handshake completed")
         print()
-        interactive_console(ssl_sock, masked=True)
+        interactive_console(ssl_sock, masked=True, is_server=False)
+    except KeyboardInterrupt:
+        print("\n[Client] Interrupted")
     except Exception as e:
         print(f"[Client] Error: {e}")
     finally:
-        ssl_sock.close()
+        try:
+            ssl_sock.close()
+        except:
+            pass
+        print("[Client] Goodbye!")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

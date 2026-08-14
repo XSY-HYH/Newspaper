@@ -1,0 +1,14 @@
+{
+  "name": "newspaper-sdk",
+  "version": "1.0.0",
+  "description": "Newspaper Minecraft mod remote operation SDK (mTLS + WebSocket)",
+  "type": "module",
+  "main": "newspaper.js",
+  "exports": {
+    ".": "./newspaper.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "license": "MIT"
+}

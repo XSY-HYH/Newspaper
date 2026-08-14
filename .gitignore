@@ -48,3 +48,13 @@ test_reverse_proxy.py
 # C# build artifacts
 NewspaperRemote/bin/
 NewspaperRemote/obj/
+
+# SDK build artifacts
+sdk/csharp/bin/
+sdk/csharp/obj/
+sdk/py/__pycache__/
+sdk/nodejs/node_modules/
+
+# Dev diary
+OFAP.md
+error.log
